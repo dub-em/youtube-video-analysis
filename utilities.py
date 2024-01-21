@@ -1,5 +1,5 @@
 import google.auth
-import openai, base64, os, cv2, json, io, re, whisper, time, random
+import openai, base64, os, cv2, json, io, re, whisper, time, warnings, random
 import librosa, librosa.display
 import matplotlib.pyplot as plt
 import numpy as np
@@ -14,13 +14,18 @@ from isodate import parse_duration
 from pytube import YouTube
 from moviepy.video.io.VideoFileClip import VideoFileClip, AudioFileClip
 from config import settings
-import variables 
+import variables
+
+# Ignore all UserWarnings
+warnings.filterwarnings("ignore")
+# warnings.filterwarnings("ignore", category=UserWarning)
+# warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 
 def execute_function_wrapper(func, arg):
     '''This function takes a function name and it's argument and executes the said function.'''
     # Execute the provided function with its arguments
-    result = func(arg)
+    result = func(arg[0], arg[1])
     return result
 
 
@@ -49,7 +54,7 @@ def search_videos_keyword(api_key, query, max_results=5):
 
 def search_videos_channel(api_key, channel_id, max_results=50):
     '''This function takes in the YouTube API key, a channel ID and results threshold
-    and extracts a limited number of video metadata with respected to the provided threshold.'''
+    and extract a limited number of video metadata with respected to the provided threshold.'''
 
     # Set up YouTube API service
     youtube = build('youtube', 'v3', developerKey=api_key)
@@ -97,7 +102,7 @@ def get_youtube_video_info(api_key, video_id):
 
 
 def convert_duration_to_seconds(duration):
-    '''This function converts the video duration extracted from youtube details to seconds'''
+    '''This function converts the video duration extracted from youtuve details to seconds'''
 
     # Parse the ISO 8601 duration format
     duration_obj = parse_duration(duration)
@@ -137,13 +142,14 @@ def speech_speed(video_transcript, subtitle_language):
     if subtitle_language != 'en':
         translated_text = translator.translate(music, src='en', dest=subtitle_language)
         music = (translated_text.text).replace('\n',' ')
-
+    
     for text in video_transcript:
         if (text['text'] != f"[{music}]") & (text['text'] != f"[Music]"): #Excludes the parts of the script that only contains just music
             combined_duration += int(text['duration'])
             number_of_words += int(len(text['text'].split(' ')))
 
-    #calculates the words per minute 
+    #calculates the words per minute
+    print(f"Number of words: {number_of_words}") 
     words_per_minute = round(number_of_words/(combined_duration/60))
     for categ in list(speed_categories.keys()):
         #using the calculated words per minute, the speech speed category is determined.
@@ -154,8 +160,7 @@ def speech_speed(video_transcript, subtitle_language):
 
 
 def subt_sing_translator(input_set):
-    '''This function takes in a part of an extracted subtitle and translates it using Google's 
-    Cloud Translate API.'''
+    '''This function takes in a part of an extracted subtitle and translates it using Google's API.'''
     
     translator = Translator()
     
@@ -175,35 +180,13 @@ def subt_sing_translator(input_set):
     return (index, translated_subt)
 
 
-def subt_set_translator(sublist):
-    '''This function takes in a sublists containing parts of an extracted sutitle,
-    and then translates it in a parallel manner (Multithreaded).'''
-
-    translated_dict = {}
-    #Multithreading (I/O bound)
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        arguments = sublist
-        futures = [executor.submit(subt_sing_translator, arg) for arg in arguments]
-
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                result = future.result()
-                if result[1] != '':
-                    translated_dict[int(result[0])] = result[1]
-            except Exception as e:
-                # print(f"Error: {e}")
-                continue
-    return translated_dict
-
-
 def combine_transcript_translate(transcript, source_language):
     '''This processes the extracted subtitle, translates (to English in a parallel manner, 
-    for certain languages not covered by GPT) and combines all its texts into one long 
-    string.'''
+    if text isn't already in English) and combines all its texts into one long string.'''
 
     string = '' #Declares an initial empty string
     
-    if source_language in ['en','es','fr','it']:
+    if source_language in ['en','fr','es']:
         # print("English")
         #Loops through the extracted transcript to compile it for further processing
         for subt in transcript:
@@ -221,20 +204,20 @@ def combine_transcript_translate(transcript, source_language):
 
         list_of_subts = [(i, transcript[i]['text'], source_language) for i in range(len(transcript)) if (transcript[i]['text'] != f"[{music}]") & (transcript[i]['text'] != f"[Music]")]
         
-        #The list of texts are further divided into set of lists which are to processed in parallel
-        number_of_cores = 4
-        len_of_sublists = int(round(len(list_of_subts)/number_of_cores))
-        sublist_of_subts = [list_of_subts[i:i+len_of_sublists] for i in range(0, len(list_of_subts), len_of_sublists)]
-        
         translated_dict = {}
-        #Multiprocessing (CPU bound)
-        with concurrent.futures.ProcessPoolExecutor() as executor:
-            arguments = sublist_of_subts
-            results = executor.map(subt_set_translator, arguments)
+        #Multithreading (I/O bound)
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            arguments = list_of_subts
+            futures = [executor.submit(subt_sing_translator, arg) for arg in arguments]
 
-            for result in results:
-                for key in list(result.keys()):
-                    translated_dict[int(key)] = result[key]
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    result = future.result()
+                    if result[1] != '':
+                        translated_dict[int(result[0])] = result[1]
+                except Exception as e:
+                    # print(f"Error: {e}")
+                    continue
 
         #The punctuated text chunks are then rearranged into a meaningful order using their original assigned index.
         ordered_keys = sorted(list(translated_dict.keys()))
@@ -248,9 +231,9 @@ def combine_transcript_translate(transcript, source_language):
 def subt_sing_punctuator(part_sub):
     '''This function takes in a part of a combined subtitle and punctuates it using GPT's API.'''
 
-    print(f"Length of text being analysed: {len(part_sub[1])}")
+    print(f"Length of text being analysed: {len(part_sub[1])}, words: {len(list(part_sub[1].split()))}")
     try:
-        combined_subt_punct = gpt_punctuator(part_sub[1])
+        combined_subt_punct = gpt_punctuator(part_sub[1], part_sub[2])
         # print(combined_subt_punct[:10])
         return (part_sub[0], combined_subt_punct)
     except:
@@ -258,29 +241,12 @@ def subt_sing_punctuator(part_sub):
         return (part_sub[0], '')
 
 
-def subt_set_punctuator(sublist):
-    '''This function takes in a sublists containing parts of a combined sutitle,
-    and then processes it in a parallel manner (Multithreaded).'''
-
-    punctuated_dict = {}
-    #Multithreading (I/O bound)
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        arguments = sublist
-        futures = [executor.submit(subt_sing_punctuator, arg) for arg in arguments]
-
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                result = future.result()
-                if result[1] != '':
-                    punctuated_dict[int(result[0])] = result[1]
-            except:
-                continue
-    return punctuated_dict
-
-
-def subtitle_processing(combined_subt):
+def subtitle_processing(combinedsubt):
     '''This function takes the combined raw subtitle and punctuates it using GPT in a parallel
     manner (Multiprocessor).'''
+
+    combined_subt = combinedsubt[0]
+    openaikey = combinedsubt[1]
 
     def split_and_enumerate_1(combined_subt, trunc_threshold):
         '''This function split the combined subtitle and enumerates each split
@@ -302,7 +268,7 @@ def subtitle_processing(combined_subt):
         subtitle_list.append((combined_count, combined_words))
         return subtitle_list
 
-    def split_and_enumerate_2(combined_subt, trunc_threshold):
+    def split_and_enumerate_2(combined_subt, trunc_threshold, openai_key):
         '''This function split the combined subtitle and enumerates each split
         to be processed in parallel, using the character-based method.'''
 
@@ -315,32 +281,33 @@ def subtitle_processing(combined_subt):
             end_index = end_index + trunc_threshold
         index_list.append((start_index, len(combined_subt)))
 
-        subtitle_list = [(i, combined_subt[index_list[i][0]:index_list[i][1]]) for i in range(len(index_list))]
+        subtitle_list = [(i, combined_subt[index_list[i][0]:index_list[i][1]], openai_key) for i in range(len(index_list))]
         return subtitle_list
 
     # Preprocesses the subtitle, so that GPT can process it without trucnating it.
     len_of_combined_subt = len(combined_subt)
     num_of_chunk_in_sublist = 2
-    num_of_cores = 4
+    num_of_cores = 8 #Use the GPT limit instead of cores since multithreading is used here.
     trunc_threshold = round(len_of_combined_subt/(num_of_cores*num_of_chunk_in_sublist)) #Uses the number of available cores (4) to split the text for quick processing
-
+    print(f"Number of characters: {len_of_combined_subt}")
+    
     #Calls the function to split and enumerate the combined subtitle
-    subtitle_list = split_and_enumerate_2(combined_subt, trunc_threshold)
-
-    #The list of texts are further divided into set of lists which are to processed in parallel 
-    len_of_sublists = int(round(len(subtitle_list)/num_of_cores))
-    sublist_of_subts = [subtitle_list[i:i+len_of_sublists] for i in range(0, len(subtitle_list), len_of_sublists)]
-    print(f"Number of sublists: {len(sublist_of_subts)}")
+    subtitle_list = split_and_enumerate_2(combined_subt, trunc_threshold, openaikey)
+    print(f"Length of subtitle list: {len(subtitle_list)}")
 
     subt_dict = {}
-    #Multiprocessing (CPU bound)
-    with concurrent.futures.ProcessPoolExecutor() as executor:
-        arguments = sublist_of_subts
-        results = executor.map(subt_set_punctuator, arguments)
+    #Multithreading (I/O bound)
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        arguments = subtitle_list
+        futures = [executor.submit(subt_sing_punctuator, arg) for arg in arguments]
 
-        for result in results:
-            for key in list(result.keys()):
-                subt_dict[int(key)] = result[key]
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                result = future.result()
+                if result[1] != '':
+                    subt_dict[int(result[0])] = result[1]
+            except:
+                continue
 
     #The punctuated text chunks are then rearranged into a meaningful order using their original assigned index.
     ordered_keys = sorted(list(subt_dict.keys()))
@@ -379,13 +346,18 @@ def download_youtube_video(video_url, output_path='.'):
 
 
 #Functions for executing text analysis and processor (classification, summarization, topic modelling).
-def gpt_punctuator(information):
+def gpt_punctuator(information, apikey=None):
     '''Function is responsible for querying the GPT-3.5 model for analysis of a given content.'''
 
     import openai
     openai_obj = openai
-    openai_obj.api_key = settings.openai_apikey
-
+    if apikey:
+        openai_obj.api_key = apikey
+    else:
+        openai_obj.api_key = settings.openai_apikey
+    
+    # print(openai_obj.api_key)
+    
     #Prompt engineering message to be fed to the GPT model.
     messages = [
         {"role":"system","content":"you are a text analyst assistant. Your job is to punctuate a given text and output only the resulting punctuated text without omiting a single word."}]
@@ -411,12 +383,17 @@ def gpt_punctuator(information):
     return (response)
 
 
-def gpt_categorizer(information):
+def gpt_categorizer(information, apikey=None):
     '''Function is responsible for querying the GPT-3.5 model for analysis of a given content.'''
     
     import openai
     openai_obj = openai
-    openai_obj.api_key = settings.openai_apikey
+    if apikey:
+        openai_obj.api_key = apikey
+    else:
+        openai_obj.api_key = settings.openai_apikey
+
+    # print(openai_obj.api_key)
 
     #Prompt engineering message to be fed to the GPT model.
     messages = [
@@ -443,12 +420,17 @@ def gpt_categorizer(information):
     return (response)
 
 
-def gpt_summarizer(information):
+def gpt_summarizer(information, apikey=None):
     '''Function is responsible for querying the GPT-3.5 model for analysis of a given content.'''
     
     import openai
     openai_obj = openai
-    openai_obj.api_key = settings.openai_apikey
+    if apikey:
+        openai_obj.api_key = apikey
+    else:
+        openai_obj.api_key = settings.openai_apikey
+
+    # print(openai_obj.api_key)
 
     #Prompt engineering message to be fed to the GPT model.
     messages = [
@@ -475,12 +457,17 @@ def gpt_summarizer(information):
     return (response)
 
 
-def gpt_topicmodeller(information):
+def gpt_topicmodeller(information, apikey=None):
     '''Function is responsible for querying the GPT-3.5 model for analysis of a given content.'''
     
     import openai
     openai_obj = openai
-    openai_obj.api_key = settings.openai_apikey
+    if apikey:
+        openai_obj.api_key = apikey
+    else:
+        openai_obj.api_key = settings.openai_apikey
+
+    # print(openai_obj.api_key)
 
     #Prompt engineering message to be fed to the GPT model.
     messages = [
@@ -488,7 +475,7 @@ def gpt_topicmodeller(information):
 
     #Creates the prompt to check for the most similar column
     prompt_1 = f"{information}"
-    prompt_2 = "Given the text which is a transcript of a language tutorial video, please generate a single topic that describes the content being taught. Output only this topic and nothing else (no additional write up)."
+    prompt_2 = "Given the text which is a transcript of a language tutorial video, please generate a single topic (in English) that describes the content being taught. Output only this topic and nothing else (no additional write up)."
 
     #Adds the prompts to the chat memory
     messages.append({"role": "user", "content": prompt_1},)
@@ -507,12 +494,17 @@ def gpt_topicmodeller(information):
     return (response)
 
 
-def gpt_qualitycheck(information):
+def gpt_qualitycheck(information, apikey=None):
     '''Function is responsible for querying the GPT-3.5 model for analysis of a given content.'''
     
     import openai
     openai_obj = openai
-    openai_obj.api_key = settings.openai_apikey
+    if apikey:
+        openai_obj.api_key = apikey
+    else:
+        openai_obj.api_key = settings.openai_apikey
+
+    # print(openai_obj.api_key)
 
     #Prompt engineering message to be fed to the GPT model.
     messages = [
@@ -539,12 +531,17 @@ def gpt_qualitycheck(information):
     return (response)
 
 
-def gpt_vocabularycheck(information):
+def gpt_vocabularycheck(information, apikey=None):
     '''Function is responsible for querying the GPT-3.5 model for analysis of a given content.'''
     
     import openai
     openai_obj = openai
-    openai_obj.api_key = settings.openai_apikey
+    if apikey:
+        openai_obj.api_key = apikey
+    else:
+        openai_obj.api_key = settings.openai_apikey
+
+    # print(openai_obj.api_key)
 
     #Prompt engineering message to be fed to the GPT model.
     messages = [
@@ -571,12 +568,17 @@ def gpt_vocabularycheck(information):
     return (response)
 
 
-def gpt_sentenceconstruct(information):
+def gpt_sentenceconstruct(information, apikey=None):
     '''Function is responsible for querying the GPT-3.5 model for analysis of a given content.'''
     
     import openai
     openai_obj = openai
-    openai_obj.api_key = settings.openai_apikey
+    if apikey:
+        openai_obj.api_key = apikey
+    else:
+        openai_obj.api_key = settings.openai_apikey
+
+    # print(openai_obj.api_key)
 
     #Prompt engineering message to be fed to the GPT model.
     messages = [
@@ -603,12 +605,17 @@ def gpt_sentenceconstruct(information):
     return (response)
 
 
-def gpt_dialogue(information):
+def gpt_dialogue(information, apikey=None):
     '''Function is responsible for querying the GPT-3.5 model for analysis of a given content.'''
     
     import openai
     openai_obj = openai
-    openai_obj.api_key = settings.openai_apikey
+    if apikey:
+        openai_obj.api_key = apikey
+    else:
+        openai_obj.api_key = settings.openai_apikey
+
+    # print(openai_obj.api_key)
 
     #Prompt engineering message to be fed to the GPT model.
     messages = [
@@ -637,42 +644,25 @@ def gpt_dialogue(information):
 
 def text_sing_analyzer(input_set):
     '''This function takes in a category and a truncated string and conducts a particular
-    type of text analysis (using GPT 3.5 Turbo) based on the category'''
+    type of analysis based on the category'''
 
     #Extracts the contents of the input
     category = input_set[0]
     trunc_string = input_set[1]
+    openai_key = input_set[2]
 
     #Uses this dictionary to map a given category to it's corresponding GPT function.
     textanalysis_dict = {'category':gpt_categorizer,'summary':gpt_summarizer,'topic':gpt_topicmodeller,
                          'quality':gpt_qualitycheck,'vocabulary':gpt_vocabularycheck,
                          'sentence_construct':gpt_sentenceconstruct,'dialogue':gpt_dialogue}
     
-    print(f"Category of Text Anlysis: {category}.")
+    print(f"Category of Text Anlysis: {category}, length of words: {len(list(trunc_string.split()))}")
     try:
-        gpt_response = execute_function_wrapper(textanalysis_dict[category], trunc_string)
+        gpt_response = execute_function_wrapper(textanalysis_dict[category], (trunc_string, openai_key))
     except:
         gpt_response = ''
     return (category, gpt_response)
 
-
-def text_set_analyzer(sublist):
-    '''This function takes in a sublist of categories of text analysis
-    and then processes it in a parallel manner (Multithreaded).'''
-
-    test_analysis_dict = {}
-    #Multithreading (I/O bound)
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        arguments = sublist
-        futures = [executor.submit(text_sing_analyzer, arg) for arg in arguments]
-
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                result = future.result()
-                test_analysis_dict[result[0]] = result[1]
-            except:
-                continue
-    return test_analysis_dict
 
 
 
@@ -686,7 +676,7 @@ def extract_audio_from_video(video_path, audio_path):
 
 
 def download_audio(video_id, output_path='audio_files'):
-    '''This function downloads the video audio file using the video ID and returns the 
+    '''This fucntion downloads the video audio file using the video ID and returns the 
     file paths'''
 
     try:
@@ -704,14 +694,14 @@ def download_audio(video_id, output_path='audio_files'):
         valid_filename = "".join(c for c in video_title if c.isalnum() or c in (' ', '.', '_'))
 
         # Set the output path (default: 'downloads')
-        audio_stream.download(output_path, filename=f"{valid_filename}.mp4")
+        audio_stream.download(output_path, filename=f"{video_id}_{valid_filename}.mp4")
 
         # Get the downloaded audio file path
-        mp4_path = f"{output_path}/{valid_filename}.mp4"
+        mp4_path = f"{output_path}/{video_id}_{valid_filename}.mp4"
 
         # Convert the downloaded audio to MP3
         audio_clip = AudioFileClip(mp4_path)
-        wav_path = (f"{output_path}/{valid_filename}.wav")
+        wav_path = (f"{output_path}/{video_id}_{valid_filename}.wav")
         audio_clip.write_audiofile(wav_path, fps=20000)
 
         print(f"Audio downloaded and converted to MP3 successfully.")
@@ -722,7 +712,7 @@ def download_audio(video_id, output_path='audio_files'):
 
 
 def analyze_audio_speed(audio_path):
-    '''This function analyses the speed (Beats per Minute) of the audio file.'''
+    '''This function analyses the speed of the audio file.'''
 
     try:
         y, sr = librosa.load(audio_path) #Loads the extracted and stored audio
@@ -802,8 +792,8 @@ def analyze_set_audio_speed(audio_path):
 
 
 def audiolang_sing_processor_google(input_set):
-    '''This function takes in the set of input necesasry to process the audio segment
-    (using the Google Speech Recognition API), in order to execute a parallel process'''
+    '''This function takes in the set of input necesasry to process the audio segment,
+    in order to execute a parallel process'''
     
     count_overall, count_transcribed, count_firstlang, count_secondlang = 1, 0, 0, 0
     recognizer = sr.Recognizer()
@@ -814,9 +804,10 @@ def audiolang_sing_processor_google(input_set):
     audio = AudioSegment.from_file(input_set[2])
     language_list = input_set[3]
     segment = audio[time_interval[0]:time_interval[1]]
+    video_id = input_set[4]
 
     # Save the segment to a temporary file
-    temp_file_path = f"audio_files/temp_segment_{index}.wav"
+    temp_file_path = f"audio_files/{video_id}_temp_segment_{index}.wav"
     segment.export(temp_file_path, format="wav")
 
     try:
@@ -847,37 +838,9 @@ def audiolang_sing_processor_google(input_set):
     return (count_overall, count_transcribed, count_firstlang, count_secondlang)
     
 
-def audiolang_set_processor_google(sublist):
-    '''This function takes in a sublist of audio segment details and processes
-    it in a parallel (Multithreaded fashion)'''
-
-    count_overall, count_transcribed, count_firstlang, count_secondlang = [], [], [], []
-    #Multithreading (I/O bound)
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        arguments = sublist
-        futures = [executor.submit(audiolang_sing_processor_google, arg) for arg in arguments]
-
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                result = future.result()  # Get the result, may raise an exception
-                count_overall.append(result[0])
-                count_transcribed.append(result[1])
-                count_firstlang.append(result[2])
-                count_secondlang.append(result[3])
-            except:
-                count_overall.append(1)
-                count_transcribed.append(0)
-                count_firstlang.append(0)
-                count_secondlang.append(0)
-    count_overall, count_transcribed = sum(count_overall), sum(count_transcribed)
-    count_firstlang, count_secondlang = sum(count_firstlang), sum(count_secondlang)
-    #print(count_overall, count_transcribed, count_firstlang, count_secondlang)
-    return (count_overall, count_transcribed, count_firstlang, count_secondlang)
-
-
-def analyze_audio_languages_google(audio_path, first_language, second_language, segment_duration_ms=4000):
-    '''This fucntion takes in an audio file path and two languages and proceeds to check the
-    distribution of both specified languages in the audio file (in a Multiprocess manner).'''
+def analyze_audio_languages_google(audio_path, first_language, second_language, video_id, segment_duration_ms=4000):
+    '''This fucntion downloads the video audio file using the video ID and calculated the
+    audio BPM (Beats per minute).'''
 
     language_isocode = variables.language_isocode
     try:
@@ -898,27 +861,30 @@ def analyze_audio_languages_google(audio_path, first_language, second_language, 
             # Calculate start and end time for each segment
             start_time = i * segment_duration_ms
             end_time = (i + 1) * segment_duration_ms
-            list_of_segments.append((i, [start_time, end_time], audio_path, language_list))
+            list_of_segments.append((i, [start_time, end_time], audio_path, language_list, video_id))
 
         perc = round(0.25*len(list_of_segments))
         sample_list = random.sample(list_of_segments, k=perc)
         print(len(list_of_segments), len(sample_list))
-        
-        len_of_sublists = int(round(len(sample_list)/4))
-        segments_sublist = [sample_list[i:i+len_of_sublists] for i in range(0, len(sample_list), len_of_sublists)]
 
         count_overall, count_transcribed, count_firstlang, count_secondlang = [], [], [], []
-        #Multiprocessing (CPU bound)
-        with concurrent.futures.ProcessPoolExecutor() as executor:
-            arguments = segments_sublist
-            results = executor.map(audiolang_set_processor_google, arguments)
+        #Multithreading (I/O bound)
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            arguments = sample_list
+            futures = [executor.submit(audiolang_sing_processor_google, arg) for arg in arguments]
 
-            for result in results:
-                count_overall.append(result[0])
-                count_transcribed.append(result[1])
-                count_firstlang.append(result[2])
-                count_secondlang.append(result[3])
-
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    result = future.result()  # Get the result, may raise an exception
+                    count_overall.append(result[0])
+                    count_transcribed.append(result[1])
+                    count_firstlang.append(result[2])
+                    count_secondlang.append(result[3])
+                except:
+                    count_overall.append(1)
+                    count_transcribed.append(0)
+                    count_firstlang.append(0)
+                    count_secondlang.append(0)
         count_overall, count_transcribed = sum(count_overall), sum(count_transcribed)
         count_firstlang, count_secondlang = sum(count_firstlang), sum(count_secondlang)
         print(count_overall, count_transcribed, count_firstlang, count_secondlang)
@@ -926,13 +892,76 @@ def analyze_audio_languages_google(audio_path, first_language, second_language, 
         #Computes teh percentage distribution of the languages using the extracted information
         percentage_transcribed = round((count_transcribed/count_overall)*100)
         percentage_firstlang = round((count_firstlang/count_transcribed)*100)
-        percentage_secondlang = 100-percentage_firstlang
+        percentage_secondlang = round((count_secondlang/count_transcribed)*100)
         # print(f"Percentage transcribed: {percentage_transcribed}%, {first_language}: {percentage_firstlang}%, {second_language}: {percentage_secondlang}%")
         return percentage_transcribed, percentage_firstlang, percentage_secondlang
     except Exception as e:
         print(f"Error: {e}")
         return None
+
+
+def video_langdist(video_id):
+    '''This function takes in a video id and conducts a language distribution analysis,
+    by taken a sample of segments from its audio file and parsing this list of samples
+    through Googles Cloud Translate API in a multithreaded fashion.'''
+
+    overall_dictionary = {}
+    except_messgs = {}
+    try:
+        video_info = get_youtube_video_info(settings.youtube_api, video_id)
+    except Exception as e:
+        except_messgs[f"(get_youtube_video_info)"] = f"{type(e).__name__}: {e}"
     
+    if video_info != None:
+        overall_dictionary['Duration'] = f"{convert_duration_to_seconds(video_info['contentDetails']['duration'])} secs"
+    else:
+        overall_dictionary['Duration'] = ''
+        except_messgs[f"(get_youtube_video_info)"] = f"Metadata extraction from video '{video_id}' was unsuccessful."
+
+    #---------------------------------------------------------------------------------------------------------
+    # Downloads the audio file to a temporary folder and analyzes the contents in segments
+    # start_int = time.perf_counter()
+    try:
+        mp4_path, wav_path = download_audio(video_id)
+    except Exception as e:
+        # In case the audio download was unsuccessful
+        except_messgs[f"(download_audio)"] = f"{type(e).__name__}: {e}"
+
+    if wav_path:
+        try:
+            first_language = 'French'
+            second_language = 'English'
+            percentage_transcribed, percentage_firstlang, percentage_secondlang = analyze_audio_languages_google(wav_path, first_language, second_language, video_id)
+            # percentage_transcribed, lang_distribution = utilities.analyze_audio_languages_openai(wav_path)
+            overall_dictionary['Percentage Transcribe'] = f"{percentage_transcribed}%"
+            overall_dictionary['First Language'] = f"{first_language}: {percentage_firstlang}%"
+            overall_dictionary['Second Language'] = f"{second_language}: {percentage_secondlang}%"
+        except Exception as e:
+            # In case the language analysis was unsuccessful
+            except_messgs[f"(analyze_audio_languages_google)"] = f"{type(e).__name__}: {e}"
+            except_messgs[f"(analyze_audio_languages_google)"] = f"Audio language analysis for video '{video_id}' was unsuccessful."
+            # print(f"Error: {e}")
+            overall_dictionary['Percentage Transcribe'] = ''
+            overall_dictionary['First Language'] = ''
+            overall_dictionary['Second Language'] = ''
+    else:
+        # In case the audio download was unsuccessful
+        except_messgs[f"(download_audio)"] = f"Audio download for video '{video_id}' was unsuccessful."
+        overall_dictionary['Percentage Transcribe'] = ''
+        overall_dictionary['First Language'] = ''
+        overall_dictionary['Second Language'] = ''
+    # finish_int = time.perf_counter()
+    # print(f"Language Distribution Analysis finished in {round((finish_int-start_int), 2)} sec(s)")
+    # print(f"Percentage transcribed: {percentage_transcribed}%, {first_language}: {percentage_firstlang}%, {second_language}: {percentage_secondlang}%")
+    try:
+        delete_audios([mp4_path, wav_path])
+    except Exception as e:
+        # In case the deletion of temporary files was unsuccessful
+        except_messgs[f"(delete_audios)"] = f"{type(e).__name__}: {e}"
+        except_messgs[f"(delete_audios)"] = f"Auido files deletion from temp folder for video '{video_id}' was unsuccessful."
+    print('')
+    return (video_id, overall_dictionary, except_messgs)
+
 
 def openai_whisper_api(path):
     '''This function takes in a file path and loads the audio file at the end of this
@@ -997,9 +1026,10 @@ def audiolang_set_processor_openai(sublist):
 
 
 def analyze_audio_languages_openai(audio_path, segment_duration_ms=4000):
-    '''This fucntion takes in an audio file path and two languages and proceeds to check the
-    distribution of both specified languages in the audio file (in a Multiprocess manner).'''
+    '''This fucntion downloads the video audio file using the video ID and calculated the
+    audio BPM (Beats per minute).'''
 
+    language_isocode = {'english':'en-US', 'italian':'it-IT', 'french':'fr-FR'}
     try:
         # Load the entire audio file
         audio = AudioSegment.from_file(audio_path)

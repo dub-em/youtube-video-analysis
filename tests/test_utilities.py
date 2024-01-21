@@ -79,16 +79,6 @@ def test_subt_sing_translator():
     assert str(type(result[1])) == "<class 'str'>"
 
 
-def test_subt_set_translator():
-    sublist = [(1, "Elle nous entend Elisa ?", 'fr'), (2, "Oui, oui, c'est bon, je vous entends.\nIl y a quelques mois,", 'fr')]
-    result = utilities.subt_set_translator(sublist)
-    assert str(type(result)) == "<class 'dict'>"
-    assert len(list(result.keys())) == 2
-    assert (1 in result.keys()) & (2 in result.keys())
-    for value in list(result.values()):
-        assert str(type(value)) == "<class 'str'>"
-
-
 def test_combine_transcript_translate():
     path = f"./tests/test_storage/test_transcript.json"
 
@@ -102,7 +92,8 @@ def test_combine_transcript_translate():
 
 
 def test_subt_sing_punctuator():
-    part_sub = (1, "Elle nous entend Elisa")
+    openai_key = "your_openai_apikey"
+    part_sub = (1, "Elle nous entend Elisa", openai_key)
     result = utilities.subt_sing_punctuator(part_sub)
     assert str(type(result)) == "<class 'tuple'>"
     assert len(result) == 2
@@ -110,34 +101,31 @@ def test_subt_sing_punctuator():
     assert str(type(result[1])) == "<class 'str'>"
 
 
-def test_subt_set_punctuator():
-    sublist = [(1, "Elle nous entend Elisa"), (2, "Oui oui c'est bon je vous entends.\nIl y a quelques mois")]
-    result = utilities.subt_set_punctuator(sublist)
-    assert str(type(result)) == "<class 'dict'>"
-    assert len(list(result.keys())) == 2
-    assert (1 in result.keys()) & (2 in result.keys())
-    for value in list(result.values()):
-        assert str(type(value)) == "<class 'str'>"
-
-
 def test_subtitle_processing():
+    openai_key = "your_openai_apikey"
     path = f"./tests/test_storage/test_transcript.json"
 
     # Loads the .json file generated from extracting metadata for a given channel ID
     with open(path, 'r') as file:
         transcript_dict = json.load(file)
     combined_subt = transcript_dict['combined subtitle']
-    final_combined_punct_subt, trunc_string = utilities.subtitle_processing(combined_subt)
+    final_combined_punct_subt, trunc_string = utilities.subtitle_processing((combined_subt, openai_key))
     assert len(trunc_string) <= 13000
 
 
 def test_gpt_punctuator():
+    openai_key = "your_openai_apikey"
     information = "Elle nous entend Elisa"
+
+    result = utilities.gpt_punctuator(information, openai_key)
+    assert str(type(result)) == "<class 'str'>"
+
     result = utilities.gpt_punctuator(information)
     assert str(type(result)) == "<class 'str'>"
 
 
 def test_gpt_categorizer():
+    openai_key = "your_openai_apikey"
     # information = "Elle nous entend, Elisa ? Oui, oui, c'est bon, je vous entends.\nIl y a quelques mois, j'ai fait une vid\u00e9o qui s'appelle \"Why French People don't Understand you\". Pourquoi les Fran\u00e7ais ne vous comprennent pas ? Dans cette vid\u00e9o, j'ai essay\u00e9 d'expliquer que parfois, certaines erreurs de prononciation rendent la compr\u00e9hension plus compliqu\u00e9e pour les francophones qui vous \u00e9coutent."
     path = f"./tests/test_storage/test_transcript.json"
 
@@ -145,18 +133,30 @@ def test_gpt_categorizer():
     with open(path, 'r') as file:
         transcript_dict = json.load(file)
     information = transcript_dict['truncated subtitle']
+
+    result = utilities.gpt_categorizer(information, openai_key)
+    assert str(type(result)) == "<class 'str'>"
+    assert ('Basic' in result) | ('Medium' in result) | ('Advanced' in result)
+
     result = utilities.gpt_categorizer(information)
     assert str(type(result)) == "<class 'str'>"
     assert ('Basic' in result) | ('Medium' in result) | ('Advanced' in result)
 
 
 def test_gpt_summarizer():
+    openai_key = "your_openai_apikey"
     path = f"./tests/test_storage/test_transcript.json"
 
     # Loads the .json file generated from extracting metadata for a given channel ID
     with open(path, 'r') as file:
         transcript_dict = json.load(file)
     information = transcript_dict['truncated subtitle']
+
+    result = utilities.gpt_summarizer(information, openai_key)
+    assert str(type(result)) == "<class 'str'>"
+    sentence = list(result.split('.'))
+    assert len(sentence) <= 10
+
     result = utilities.gpt_summarizer(information)
     assert str(type(result)) == "<class 'str'>"
     sentence = list(result.split('.'))
@@ -164,59 +164,88 @@ def test_gpt_summarizer():
 
 
 def test_gpt_topicmodeller():
+    openai_key = "your_openai_apikey"
     path = f"./tests/test_storage/test_transcript.json"
 
     # Loads the .json file generated from extracting metadata for a given channel ID
     with open(path, 'r') as file:
         transcript_dict = json.load(file)
     information = transcript_dict['truncated subtitle']
+
+    result = utilities.gpt_topicmodeller(information, openai_key)
+    assert str(type(result)) == "<class 'str'>"
+
     result = utilities.gpt_topicmodeller(information)
     assert str(type(result)) == "<class 'str'>"
 
 
 def test_gpt_qualitycheck():
+    openai_key = "your_openai_apikey"
     path = f"./tests/test_storage/test_transcript.json"
 
     # Loads the .json file generated from extracting metadata for a given channel ID
     with open(path, 'r') as file:
         transcript_dict = json.load(file)
     information = transcript_dict['truncated subtitle']
+
+    result = utilities.gpt_qualitycheck(information, openai_key)
+    assert str(type(result)) == "<class 'str'>"
+    assert ('Poorly articulated' in result) | ('Moderately articulated' in result) | ('Very articulated' in result)
+
     result = utilities.gpt_qualitycheck(information)
     assert str(type(result)) == "<class 'str'>"
     assert ('Poorly articulated' in result) | ('Moderately articulated' in result) | ('Very articulated' in result)
 
 
 def test_gpt_vocabularycheck():
+    openai_key = "your_openai_apikey"
     path = f"./tests/test_storage/test_transcript.json"
 
     # Loads the .json file generated from extracting metadata for a given channel ID
     with open(path, 'r') as file:
         transcript_dict = json.load(file)
     information = transcript_dict['truncated subtitle']
+
+    result = utilities.gpt_vocabularycheck(information, openai_key)
+    assert str(type(result)) == "<class 'str'>"
+    assert ('Basic' in result) | ('Intermediate' in result) | ('Advanced' in result)
+
     result = utilities.gpt_vocabularycheck(information)
     assert str(type(result)) == "<class 'str'>"
     assert ('Basic' in result) | ('Intermediate' in result) | ('Advanced' in result)
 
 
 def test_gpt_sentenceconstruct():
+    openai_key = "your_openai_apikey"
     path = f"./tests/test_storage/test_transcript.json"
 
     # Loads the .json file generated from extracting metadata for a given channel ID
     with open(path, 'r') as file:
         transcript_dict = json.load(file)
     information = transcript_dict['truncated subtitle']
+
+    result = utilities.gpt_sentenceconstruct(information, openai_key)
+    assert str(type(result)) == "<class 'str'>"
+    assert ('Basic' in result) | ('Intermediate' in result) | ('Advanced' in result)
+
     result = utilities.gpt_sentenceconstruct(information)
     assert str(type(result)) == "<class 'str'>"
     assert ('Basic' in result) | ('Intermediate' in result) | ('Advanced' in result)
 
 
 def test_gpt_dialogue():
+    openai_key = "your_openai_apikey"
     path = f"./tests/test_storage/test_transcript.json"
 
     # Loads the .json file generated from extracting metadata for a given channel ID
     with open(path, 'r') as file:
         transcript_dict = json.load(file)
     information = transcript_dict['truncated subtitle']
+
+    result = utilities.gpt_dialogue(information, openai_key)
+    assert str(type(result)) == "<class 'str'>"
+    assert ('Present' in result) | ('Not Present' in result)
+
     result = utilities.gpt_dialogue(information)
     assert str(type(result)) == "<class 'str'>"
     assert ('Present' in result) | ('Not Present' in result)
@@ -237,22 +266,6 @@ def test_text_sing_analyzer():
     assert result[0] == 'sentence_construct'
     assert str(type(result[0])) == "<class 'str'>"
     assert str(type(result[1])) == "<class 'str'>"
-
-
-def test_text_set_analyzer():
-    path = f"./tests/test_storage/test_transcript.json"
-
-    # Loads the .json file generated from extracting metadata for a given channel ID
-    with open(path, 'r') as file:
-        transcript_dict = json.load(file)
-
-    trunc_string = transcript_dict['truncated subtitle']
-    sublist = [('sentence_construct', trunc_string),('dialogue', trunc_string)]
-    result = utilities.text_set_analyzer(sublist)
-
-    assert 'sentence_construct' in result.keys()
-    assert 'dialogue' in result.keys()
-    assert len(list(result.keys())) == 2
 
 
 def test_download_audio():
@@ -292,25 +305,6 @@ def test_audiolang_sing_processor_google():
     assert (str(type(result[3])) == "<class 'int'>") & (result[3] <= 1)
 
 
-def test_audiolang_set_processor_google():
-    audio_path = './audio_files/Italian Conversation Practice for Beginners  Learn Italian_3.wav'
-    first_language = 'English'
-    second_language = 'Italian'
-    language_isocode = variables.language_isocode
-    language_list = []
-    for language in [first_language.lower(), second_language.lower()]:
-        language_list.append(language_isocode[language])
-    print(language_list)
-    sublist = [(1, [0, 5000], audio_path, language_list),(2, [5001, 10000], audio_path, language_list)]
-    result = utilities.audiolang_set_processor_google(sublist)
-    assert str(type(result)) == "<class 'tuple'>"
-    assert len(result) == 4
-    assert (str(type(result[0])) == "<class 'int'>") & (result[0] == 2)
-    assert (str(type(result[1])) == "<class 'int'>") & (result[1] <= 2)
-    assert (str(type(result[2])) == "<class 'int'>") & (result[2] <= 2)
-    assert (str(type(result[3])) == "<class 'int'>") & (result[3] <= 2)
-
-
 def test_analyze_audio_languages_google():
     wav_path = './audio_files/Italian Conversation Practice for Beginners  Learn Italian_3.wav'
     first_language = 'English'
@@ -319,6 +313,15 @@ def test_analyze_audio_languages_google():
     assert (str(type(percentage_transcribed)) == "<class 'int'>") 
     assert (str(type(percentage_firstlang)) == "<class 'int'>")
     assert (str(type(percentage_secondlang)) == "<class 'int'>")
+
+
+def test_video_langdist():
+    result = utilities.video_langdist('ZPeNG-CJ2ZU')
+    assert str(type(result)) == "<class 'tuple'>"
+    assert str(type(result[0])) == "<class 'str'>"
+    assert str(type(result[1])) == "<class 'dict'>"
+    assert len(list(result[1].keys())) == 4
+    assert str(type(result[2])) == "<class 'dict'>"
 
 
 def test_delete_audios():

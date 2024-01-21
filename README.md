@@ -21,14 +21,15 @@
 + There are two main methods in this project, which are the "video_extraction_channel" method in the video_extractor.py file and the "channel_video_parser" method in the video_analyzer.py file.
 
 ### Video_Extraction_Channel
-+ The video_extraction_channel function takes in a channel ID and extracts the video details (containing video ID, title, etc.) for a limited number of videos. This function also conducts an audio analysis using the Google API (Google Speech-to-Tex), to check the distribution of the languages present in the video.
++ The video_extraction_channel function takes in a channel ID and extracts the video details (containing video ID, title, etc.) for a limited number of videos. This function also conducts an audio analysis using the Google API (Google Speech-to-Text), to check the distribution of the languages present in the video.
 
 + Function (video_extraction_channel)
 
 ```python
 >>> def video_extraction_channel(channel_id, max_results):
-        '''This function extracts the given number of results given a keyword,
-        and saves the file in a .json file for later reference.
+        '''This function extracts the given number of results given a channel ID, conduct
+        a language distribution analysis for each video ID and saves the file in a .json file 
+        for later reference.
 
         Parameters
         ----------
@@ -50,6 +51,16 @@
                     
               input: YouTube API key, channel_id, max_results
               output: dictionary (containing metadata on videos from channel chosen)'''
+      ```
+
+    + ```python
+      >>> def video_langdist(video_id):
+              '''This function takes in a video id and conducts a language distribution analysis,
+              by taken a sample of segments from its audio file and parsing this list of samples
+              through Googles Cloud Translate API in a multithreaded fashion..
+                    
+              input: video_id
+              output: video_id, dictionary (containing the video details), dictionary (containing any possible error logs)'''
       ```
 
     + ```python
@@ -87,16 +98,7 @@
               output: file location of mp3 and wav file'''
       ```
 
-    + Note: The audio analysis is conducted in a distributed manner, using 4 processing nodes as the number of available nodes for processing (this can be increased with availabilty of more nodes). The list of audio segments are split in four subset for each node. In each node, the audio segments are sent the Google API in a multithreaded fashion for quickened processing. This is done using the following functions; "audiolang_set_processor_google" and "audiolang_sing_processor_google"
-
-    + ```python
-      >>> def audiolang_set_processor_google(sublist):
-              '''This function takes in a sublist of audio segment details and processes
-              it in a parallel.
-                        
-              input: sub-list of audio segments (list)
-              output: a set containing the sum of the transcibed segments and their respictive languages (set)'''
-      ```
+    + Note: The audio analysis is conducted in a distributed manner. The list of audio segments are sent to the Google Speech-to-Text API in a multithreaded fashion for quickened processing. This is done using the following function; "audiolang_sing_processor_google"
 
     + ```python
       >>> def audiolang_sing_processor_google(input_set):
@@ -154,6 +156,21 @@
 >>> def channel_video_parser(channel_id):
         '''This function takes in a channel id and process all the videos (that have its dominant 
         language spoken during over 90% of the video) listed under this channel id in the channel_content folder. 
+
+        Parameters
+        ----------
+        channel_id (string): The YouTube channel ID in string format.
+
+        Returns
+        ----------
+        This function simply saves the extracted video contents to a .json file, and 
+        does not return anything.'''
+```
+
+```python
+>>> def channel_video_parser_modified(channel_id):
+        '''This function takes in a channel id and process all the videos (that have its dominant 
+        language spoken during over 90% of the video) listed under this channel id in the channel_content folder, in a parallel manner d=thereby cutting down the processing time by several folds.. 
 
         Parameters
         ----------
@@ -226,16 +243,7 @@
               output: combined subtitle in English (string)'''
       ```
 
-    + Note: In the event the video subtitle isn't in English and needs to be translated from source language to English, this translation process is executed in parallel and is done so by calling two more functions; "subt_set_translator" and "subt_sing_translator". The list of subtitle segments is broken into sublists (using the number of available processing cores/nodes) and processed in a paralled manner using the "subt_set_translator" function. The "subt_set_translator" takes in this subset of the list containing the subtitle segments and translates then in a multithreaded fashion by making use of "subt_sing_translator" which calls the Google Translation API.
-
-    + ```python
-      >>> def subt_set_translator(sublist):
-              '''This function takes in a sublists containing parts of an extracted sutitle,
-              and then translates it in a parallel manner (Multithreaded).
-                        
-              input: sub-list of subtitle segments (list)
-              output: translated subtitle segments in English (dictionary)'''
-      ```
+    + Note: In the event the video subtitle isn't in English and needs to be translated from source language to English, this translation process is executed in parallel and is done so by calling one more functions;  "subt_sing_translator". The list of subtitle segments are translated in a multithreaded fashion using the "subt_sing_translator" which calls the Google Cloud Translation API.
 
     + ```python
       >>> def subt_sing_translator(input_set):
@@ -254,16 +262,7 @@
               output: punctuated combined subtitle in English (string), truncated subtitle using GPT token threshold (string)'''
       ```
 
-    + Note: The subtitle punctaution is also done in a distributed manner for mainly two reasons. First is to be able to fit the entire subtitle into GPT, and secondly for quicker computation. The distributed computation is also carried out using two functions; "subt_set_punctuator" and "subt_sing_punctuator". The combined translated subtitle is split into chunks (using the number of available nodes/cores once again) and appended to a list. This list is broken into sublists using the number of available nodes/cores and each sublist is fed into "subt_set_punctuator" in a parallel manner. Each sulist being processed by each node is then sent to the OpenAI GPT model in a multithreaded manner.
-
-    + ```python
-      >>> def subt_set_punctuator(sublist):
-              '''This function takes in a sublists containing parts of a combined sutitle,
-              and then processes it in a parallel manner (Multithreaded).
-                        
-              input: sub-list of combined subtitle chunks (list)
-              output: punctuated subtitle chunks in English (dictionary)'''
-      ```
+    + Note: The subtitle punctaution is also done in a distributed manner for mainly two reasons. First is to be able to fit the entire subtitle into GPT, and secondly for quicker computation. The distributed computation is also carried out one more function; "subt_sing_punctuator". The combined translated subtitle is split into chunks (using the number of available nodes/cores once again) and appended to a list which is then sent to the OpenAI GPT model in a multithreaded manner.
 
     + ```python
       >>> def subt_sing_punctuator(part_sub):
@@ -273,16 +272,7 @@
               output: translated subtitle chunk in English (set)'''
       ``` 
 
-    + Note: There are currently 7 categories (stated in the project requirements) of text analysis conducted using OpenAI's GPT model. These categories are processed in parallel using two functions; "text_set_analyzer" and "text_sing_analyzer". The list of categories are split into sublists using the number of available cores/nodes. These sublists are processed in a parallel manner, with each sublist processed using the "text_set_analyzer" function. Each sublist sent to the "text_set_analyzer" function is then processed in a mulithreaded manner using the "text_sing_analyzer" which calls the GPT function to conduct the text analysis.
-
-    + ```python
-      >>> def text_set_analyzer(sublist):
-              '''This function takes in a sublist of categories of text analysis
-              and then processes it in a parallel manner (Multithreaded).
-                                
-              input: subset of text analysis categories (list)
-              output: result of text analysis for each category (dictionary)'''
-      ```
+    + Note: There are currently 7 categories (stated in the project requirements) of text analysis conducted using OpenAI's GPT model. These categories are processed in parallel using one function; "text_sing_analyzer". The list of categories are processed in a mulithreaded manner using the "text_sing_analyzer" which calls the GPT function to conduct the text analysis.
 
     + ```python
       >>> def text_sing_analyzer(input_set):
@@ -399,7 +389,7 @@
 
 + It is also important to note that paid version of the Googe SpeechRecognition API (Spech-to-Text) and the paid version of the Google Cloud Translate API both require API keys which need to be set up on the GCP Console. The path to the generated keys then need to specified in the script for the paid version of both APIs (in the api_paid_versions folder)
 
-+ All the parallel functions developed for this project were developed with 4 available nodes/cores. This can be adjusted in the case of more available cores/nodes for processing.
++ All the parallel functions developed for this project were developed with 6 available nodes/cores. This can be adjusted in the case of more available cores/nodes for processing.
 
 + Error logs for the source code logic flow is manually integrated into the system to help track source of error in code.
 
@@ -416,6 +406,3 @@
     + ./output_frames : to store the image frames extracted from the video files for image analysis
 
     + Note: these folders can be changed, but these changes have to be reflected in the source code to prevent errors. Also, these folders (channel_content and video_details) are only necessary when sotring the results of the extraction and analysis on a local environment. If these results are loaded directly to a relational database, then these two folder would no longer be necessary.
-
-
-

@@ -18,6 +18,15 @@ def test_get_youtube_video_info():
     assert ('contentDetails' in result.keys())
 
 
+def test_video_langdist():
+    result = utilities.video_langdist('ZPeNG-CJ2ZU')
+    assert str(type(result)) == "<class 'tuple'>"
+    assert str(type(result[0])) == "<class 'str'>"
+    assert str(type(result[1])) == "<class 'dict'>"
+    assert len(list(result[1].keys())) == 4
+    assert str(type(result[2])) == "<class 'dict'>"
+
+
 def test_convert_duration_to_seconds():
     result_1 = utilities.convert_duration_to_seconds('PT19M58S') 
     result_2 = utilities.convert_duration_to_seconds('PT2H9S')

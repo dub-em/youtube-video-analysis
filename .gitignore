@@ -1,17 +1,5 @@
-venv
-
 .env
-secret_keys.json
-magicweb-solution-0f16c8830e66.json
-magicweb-solution-507c34d6556a.json
-
-.ipynb_checkpoints
+venv
 __pycache__
 .pytest_cache
-
-output_frames
-English study plan - 20-minute daily English learning routine_3.wav
-English study plan - 20-minute daily English learning routine.mp4
-Learn French with TINTIN 1 (fr sub)_3.wav
-Learn French with TINTIN 1 (fr sub).mp4
-temp_segment.wav
+.ipynb_checkpoints

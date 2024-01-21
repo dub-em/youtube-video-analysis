@@ -71,7 +71,7 @@ def test_subtitle_processing():
     assert len(trunc_string) <= 13000
 
 
-def test_text_set_analyzer():
+def test_text_sing_analyzer():
     path = f"./tests/test_storage/test_transcript.json"
 
     # Loads the .json file generated from extracting metadata for a given channel ID
@@ -79,17 +79,19 @@ def test_text_set_analyzer():
         transcript_dict = json.load(file)
 
     trunc_string = transcript_dict['truncated subtitle']
-    sublist = [('sentence_construct', trunc_string),('dialogue', trunc_string)]
-    result = utilities.text_set_analyzer(sublist)
-
-    assert 'sentence_construct' in result.keys()
-    assert 'dialogue' in result.keys()
-    assert len(list(result.keys())) == 2
+    input_set = ('sentence_construct', trunc_string)
+    result = utilities.text_sing_analyzer(input_set)
+    assert str(type(result)) == "<class 'tuple'>"
+    assert len(result) == 2
+    assert result[0] == 'sentence_construct'
+    assert str(type(result[0])) == "<class 'str'>"
+    assert str(type(result[1])) == "<class 'str'>"
 
 
 def test_video_analyzer():
-    error_log = video_analyzer.video_analyzer('ZPeNG-CJ2ZU')
-    assert str(type(error_log)) == "<class 'dict'>"
+    openai_key = "your_openai_apikey"
+    video_id = video_analyzer.video_analyzer(('ZPeNG-CJ2ZU', openai_key))
+    assert str(type(video_id)) == "<class 'str'>"
 
     contents = os.listdir(f"./video_details")
     assert 'ZPeNG-CJ2ZU.json' in contents

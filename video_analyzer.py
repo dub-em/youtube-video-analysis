@@ -1,4 +1,4 @@
-import  json, time
+import  json, time, warnings
 import librosa, librosa.display
 import utilities
 import concurrent.futures
@@ -6,8 +6,13 @@ from config import settings
 
 #Run command: python video_analyzer.py
 
+# Ignore all UserWarnings
+warnings.filterwarnings("ignore")
+# warnings.filterwarnings("ignore", category=UserWarning)
+# warnings.filterwarnings("ignore", category=RuntimeWarning)
+
 # Function to analyze the  video content, given a video ID
-def video_analyzer(video_id, errorlog={}):
+def video_analyzer(videoid, errorlog={}):
     '''This function takes in a video ID and extracts and analyses its content,
     and then stores this content in a file'''
 
@@ -17,11 +22,13 @@ def video_analyzer(video_id, errorlog={}):
     #------------------------------------------------------------------------------------------------------
     # Extract video details using its video ID
     # start_int = time.perf_counter()
-    video_id = video_id
+    video_id = videoid[0]
+    openaikey = videoid[1]
     try:
         video_info = utilities.get_youtube_video_info(settings.youtube_api, video_id)
     except Exception as e:
         # In case the video metadata isn't successfully extracted
+        video_info = None
         errorlog[f"(get_youtube_video_info)"] = f"{type(e).__name__}: {e}"
     # finish_int = time.perf_counter()
     # print(f"Get video details finished in {round((finish_int-start_int), 2)} sec(s)")
@@ -71,6 +78,7 @@ def video_analyzer(video_id, errorlog={}):
     # start_int = time.perf_counter()
     try:
         video_transcript = utilities.get_video_transcript(video_ids, subtitle_language)
+        # print(f"Transcript extracted successfully")
     except Exception as e: 
         # In case the transcript extraction wasn't successful
         errorlog[f"(get_video_transcript):'{subtitle_language[0]}'"] = f"{type(e).__name__}: {e}"
@@ -90,14 +98,19 @@ def video_analyzer(video_id, errorlog={}):
     # finish_int = time.perf_counter()
     # print(f"Get video transcript finished in {round((finish_int-start_int), 2)} sec(s)")
 
+    # print(video_transcript[:2])
+    
     if video_transcript:
         #------------------------------------------------------------------------------------------------------
         # Using the extracted transcript, calculate the speech speed.
         # start_int = time.perf_counter()
         try:
             combined_duration, words_per_minute, audio_speed = utilities.speech_speed(video_transcript, subtitle_language[0])
+            # print(f"Speech speed calculated successfully")
         except Exception as e:
             # In case the speech speed calculation was unsuccessful
+            # print(f"Speech speed calculation unsuccessful")
+            words_per_minute = None
             errorlog[f"(speech_speed)"] = f"{type(e).__name__}: {e}"
         # finish_int = time.perf_counter()
         # print(f"Speech speed calculation finished in {round((finish_int-start_int), 2)} sec(s)")
@@ -121,6 +134,7 @@ def video_analyzer(video_id, errorlog={}):
             combined_subt = utilities.combine_transcript_translate(video_transcript, subtitle_language[0])
         except Exception as e:
             # In case the subtitle combination was unsuccessful
+            combined_subt = None
             errorlog[f"(combine_transcript_translate)"] = f"{type(e).__name__}: {e}"
         # finish_int = time.perf_counter()
         # print(f"Transcript translation calculation finished in {round((finish_int-start_int), 2)} sec(s)")
@@ -130,39 +144,41 @@ def video_analyzer(video_id, errorlog={}):
         # start_int = time.perf_counter()
         if combined_subt:
             try:
-                final_combined_punct_subt, trunc_string = utilities.subtitle_processing(combined_subt)
+                final_combined_punct_subt, trunc_string = utilities.subtitle_processing((combined_subt, openaikey))
                 overall_dictionary['Punctuated Subtitle'] = final_combined_punct_subt  
             except Exception as e:
                 # In case the subtitle punctuation was unsuccessful
+                trunc_string = None
                 overall_dictionary['Punctuated Subtitle'] = ''
                 errorlog[f"(subtitle_processing)"] = f"{type(e).__name__}: {e}"   
         else:
             # In case the subtitle combination was unsuccessful
+            trunc_string = None
             overall_dictionary['Punctuated Subtitle'] = ''
             errorlog[f"(combine_transcript_translate)"] = f"Transcript compilation and/or translation for video '{video_id}' was unsuccessful."
         # finish_int = time.perf_counter()
         # print(f"Subtitle punctuation finished in {round((finish_int-start_int), 2)} sec(s)")
 
-        # Conduct the text analysis in a parallel manner using OpenAI's GPT model
+        # Conduct the text analysis in a parallel manner (multithreading) using OpenAI's GPT model
         list_of_categories = ['category','summary','topic','quality','vocabulary','sentence_construct','dialogue']
         if trunc_string:
-            category_and_truncstring = [(category, trunc_string) for category in list_of_categories]
-
-            len_of_sublists = 2
-            sublist_of_textanalysis = [category_and_truncstring[i:i+len_of_sublists] for i in range(0, len(category_and_truncstring), len_of_sublists)]
-
+            category_and_truncstring = [(category, trunc_string, openaikey) for category in list_of_categories]
+            
             #------------------------------------------------------------------------------------------------------
             # start_int = time.perf_counter()
             try:
                 textanalysis_subt_dict = {}
-                # Multiprocessing (CPU bound)
-                with concurrent.futures.ProcessPoolExecutor() as executor:
-                    arguments = sublist_of_textanalysis
-                    results = executor.map(utilities.text_set_analyzer, arguments)
+                #Multithreading (I/O bound)
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    arguments = category_and_truncstring
+                    futures = [executor.submit(utilities.text_sing_analyzer, arg) for arg in arguments]
 
-                    for result in results:
-                        for key in list(result.keys()):
-                            textanalysis_subt_dict[key] = result[key]
+                    for future in concurrent.futures.as_completed(futures):
+                        try:
+                            result = future.result()
+                            textanalysis_subt_dict[result[0]] = result[1]
+                        except:
+                            continue
 
                 # Loads the result of the text analysis into the dictionary
                 for category in list_of_categories:
@@ -206,15 +222,18 @@ def video_analyzer(video_id, errorlog={}):
     #------------------------------------------------------------------------------------------------------
     # Convert dictionary to JSON string
     overall_response_string = json.dumps(overall_dictionary, indent=4)  # Use indent for pretty formatting
+    errorlog_string = json.dumps(errorlog, indent=4)
 
     # Save JSON string to a file
     with open(f"./video_details/{video_id}.json", "w") as json_file:
         json_file.write(overall_response_string)
-    print('Analysis concluded!')
-    return errorlog
+    with open(f"./video_details/error_logs/{video_id}_errorlogs.json", "w") as json_file:
+        json_file.write(errorlog_string)
+    print(f"{video_id} Analysis concluded!")
+    return video_id
 
 
-# Function to loop through the list of video metadata associated with a given channel ID
+# Function to loop through the list of video metadata associated with a given channel ID (one after the other)
 def channel_video_parser(channel_id):
     '''This function takes in a channel id and process all the videos (that have its dominant 
     language spoken during over 90% of the video) listed under this channel id in the channel_content 
@@ -264,6 +283,88 @@ def channel_video_parser(channel_id):
     print(f"Finished parsing through the videos under {channel_id}.\n")
 
 
+#Function to loop through the list of videos in batches depending on the available cores (Faster!)
+def channel_video_parser_modified(channel_id):
+    '''This function takes in a channel id and process all the videos (that have its dominant 
+    language spoken during over 90% of the video) listed under this channel id in the channel_content 
+    folder.'''
+
+    path = f"./channel_content/{channel_id}_videos.json"
+
+    # Loads the .json file generated from extracting metadata for a given channel ID
+    with open(path, 'r') as file:
+        channel_content = json.load(file)
+
+    valid_videos = []
+    
+    # Loops through each video ID in the .json file and parses it through the video_analyzer function.
+    for key in list(channel_content.keys()):
+        except_messgs = {}
+
+        # Extracts the two languages for each video ID
+        try:
+            first_language = int(channel_content[key]['First Language'].split(':')[1].replace(' ','').replace('%',''))
+            second_language = int(channel_content[key]['Second Language'].split(':')[1].replace(' ','').replace('%',''))
+        
+            if (first_language >= 90) | (second_language >= 90):
+                valid_videos.append(key)
+        except Exception as e:
+            continue
+
+    print(f"Length of valid videos: {len(valid_videos)}")
+
+    # Implementing multiple keys to be used to beat the token limit per minute
+    openaikey_1 = 'your_first_openai_gpt_apikey'
+    openaikey_2 = 'your_second_openai_gpt_apikey'
+    key_list = [openaikey_1, openaikey_2]
+    count = 0
+    
+    num_of_cores = 6
+    for i in range(0,len(valid_videos),num_of_cores):
+        #This creates batches of the video IDs to be processed in parallel
+        batch = valid_videos[i : i+num_of_cores]
+        print(batch)
+
+        #This piece of code loops through the list of keys and uses a new one after a number of videos
+        if count >= len(key_list):
+            count = 0
+            openaikey = key_list[count]
+        else:
+            openaikey = key_list[count]
+        print(openaikey, count)
+
+        #The current API key being used is is infused into the current batch to be used for the GPT prompting.
+        batch = [(videoid, openaikey) for videoid in batch]
+
+        successfully_analysed = []
+        # Multiprocessing (CPU bound)
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+            arguments = batch
+            results = executor.map(video_analyzer, arguments)
+
+            for result in results:
+                try:
+                    successfully_analysed.append(result)
+                except Exception as e:
+                    except_messgs[f"(video_analyzer)"] = f"{type(e).__name__}: {e}"
+                    continue
+
+        print(successfully_analysed)
+        except_messgs[f"video list"] = batch
+        except_messgs[f"analyzed videos"] = batch
+
+        # Convert error log dict to JSON strings
+        except_messgs_string = json.dumps(except_messgs, indent=4)
+
+        # Save JSON string to a file
+        with open(f"./video_details/error_logs/batch_{i}_errorlogs.json", "w") as json_file:
+            json_file.write(except_messgs_string)
+
+        count += 1
+
+    print(f"Finished parsing through the videos under {channel_id}.\n")
+
+
 
 if __name__ == "__main__":
 
@@ -274,25 +375,28 @@ if __name__ == "__main__":
     # video_id = 'gR0SYOCZaNY'
     # video_id = 'E4h-8rw2GlY'
     # video_id = 'bVANnFMuaW0'
-    video_id = '__Cu2nwgAjA'
+    # video_id = '__Cu2nwgAjA'
+    # video_id = 'BP_FvY8LT_E'
+    # video_id = 'uBo0Tfk-k9w'
 
-    except_messgs = video_analyzer(video_id)
+    # except_messgs = video_analyzer(video_id)
 
     # Convert error log dict to JSON strings
-    except_messgs_string = json.dumps(except_messgs, indent=4)
+    # except_messgs_string = json.dumps(except_messgs, indent=4)
 
     # Save JSON string to a file
-    with open(f"./video_details/error_logs/{video_id}_errorlogs.json", "w") as json_file:
-        json_file.write(except_messgs_string)
+    # with open(f"./video_details/error_logs/{video_id}_errorlogs.json", "w") as json_file:
+    #     json_file.write(except_messgs_string)
     
     # Analyses the contents of the videos listed under this channel ID and stores them in a .json file
     # channel_id = 'UCoUWq2QawqdC3-nRXKk-JUw' #EasyFrench
     # channel_id = 'UCVzyfpNuFF4ENY8zNTIW7ug' #Piece of French
     # channel_id = 'UCbj8Qov-9b5WTU1X4y7Yt-w' #French Mornings with Elisa
-    # channel_id = 'UCI4xp8qHD1MDErkqxb1dPbA' #innerFrench
+    channel_id = 'UCI4xp8qHD1MDErkqxb1dPbA' #innerFrench
 
     # channel_video_parser(channel_id)
+    channel_video_parser_modified(channel_id)
 
     finish = time.perf_counter()
-    print(f"Finished {video_id} analysis in {round((finish-start)/60, 2)} minute(s)")
-    # print(f"Finished {channel_id} analysis in {round((finish-start)/60, 2)} minute(s)")
+    # print(f"Finished {video_id} analysis in {round((finish-start)/60, 2)} minute(s)")
+    print(f"Finished {channel_id} analysis in {round((finish-start)/60, 2)} minute(s)")
